@@ -11,7 +11,7 @@ COLUMNS = {
         "status", "origem", "notas", "criado_em", "atualizado_em",
     ],
     "pedidos": [
-        "id", "contato_nome", "mes_ref", "descricao", "qtd_pecas",
+        "id", "contato_nome", "mes_ref", "descricao",
         "valor_total", "valor_pago", "status_pagamento",
         "data_entrega", "criado_em",
     ],
@@ -19,6 +19,9 @@ COLUMNS = {
         "id", "pedido_id", "cliente", "descricao_peca",
         "tamanho", "data_prevista", "status_bordagem",
         "status_pagamento_ref", "notas",
+    ],
+    "custos": [
+        "id", "data", "categoria", "descricao", "valor", "criado_em",
     ],
 }
 
@@ -106,6 +109,15 @@ def delete_row(sheet_name: str, row_id: str):
         return
     ws.delete_rows(matches[0] + 2)
     read_sheet.clear()
+
+
+def sync_cronograma_pagamento(contato_nome: str, status_pagamento: str):
+    """Atualiza status_pagamento_ref em todas as peças do cronograma para este cliente."""
+    df = read_sheet("cronograma")
+    if df.empty:
+        return
+    for _, row in df[df["cliente"] == contato_nome].iterrows():
+        update_row("cronograma", row["id"], {"status_pagamento_ref": status_pagamento})
 
 
 def ensure_headers():
