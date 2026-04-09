@@ -1,14 +1,8 @@
 import gspread
-from google.oauth2.service_account import Credentials
 import pandas as pd
 import streamlit as st
 from datetime import datetime
 import uuid
-
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
 
 # Colunas de cada aba
 COLUMNS = {
@@ -17,7 +11,7 @@ COLUMNS = {
         "status", "origem", "notas", "criado_em", "atualizado_em",
     ],
     "pedidos": [
-        "id", "contato_nome", "mes_ref", "descricao",
+        "id", "contato_nome", "mes_ref", "descricao", "qtd_pecas",
         "valor_total", "valor_pago", "status_pagamento",
         "data_entrega", "criado_em",
     ],
@@ -32,8 +26,6 @@ COLUMNS = {
 def is_configured() -> bool:
     return (
         "gcp_service_account" in st.secrets
-        and "spreadsheet_name" in st.secrets
-        and st.secrets.get("spreadsheet_name", "") != ""
         and str(st.secrets["gcp_service_account"].get("project_id", "")) not in ("", "SEU_PROJECT_ID")
     )
 
@@ -41,8 +33,11 @@ def is_configured() -> bool:
 @st.cache_resource
 def _get_spreadsheet():
     creds_info = dict(st.secrets["gcp_service_account"])
-    creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-    client = gspread.authorize(creds)
+    client = gspread.service_account_from_dict(creds_info)
+    # Abre por ID se disponível (mais confiável), senão por nome
+    spreadsheet_id = st.secrets.get("spreadsheet_id", "")
+    if spreadsheet_id:
+        return client.open_by_key(spreadsheet_id)
     return client.open(st.secrets["spreadsheet_name"])
 
 

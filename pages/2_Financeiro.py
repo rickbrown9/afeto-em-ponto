@@ -113,10 +113,11 @@ with st.form("novo_pedido", clear_on_submit=True):
     mes_ref    = c2.selectbox("Mês de referência", MESES_FORM,
                               index=MESES_FORM.index(MES_ATUAL) if MES_ATUAL in MESES_FORM else 0,
                               format_func=lambda x: MES_NOMES.get(x, x))
-    descricao  = st.text_input("Descrição do pedido *", placeholder="Ex: 3 peças Composição Um Lar 20x20")
-    c3, c4 = st.columns(2)
-    valor_total = c3.number_input("Valor total (R$)", min_value=0.0, step=10.0)
-    valor_pago  = c4.number_input("Valor já pago (R$)", min_value=0.0, step=10.0)
+    descricao  = st.text_input("Descrição do pedido *", placeholder="Ex: Composição Um Lar 20x20")
+    c3, c4, c5 = st.columns(3)
+    qtd_pecas   = c3.number_input("Nº de peças *", min_value=1, step=1, value=1)
+    valor_total = c4.number_input("Valor total (R$)", min_value=0.0, step=10.0)
+    valor_pago  = c5.number_input("Valor já pago (R$)", min_value=0.0, step=10.0)
     data_entrega = c1.text_input("Entrega prevista", placeholder="Ex: 20/04/2026")
 
     if st.form_submit_button("Adicionar pedido", type="primary"):
@@ -130,6 +131,7 @@ with st.form("novo_pedido", clear_on_submit=True):
                 "contato_nome": cliente.strip(),
                 "mes_ref": mes_ref,
                 "descricao": descricao.strip(),
+                "qtd_pecas": int(qtd_pecas),
                 "valor_total": valor_total,
                 "valor_pago": valor_pago,
                 "status_pagamento": status_calc,

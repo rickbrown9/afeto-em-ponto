@@ -18,13 +18,9 @@ secrets_path = os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.to
 secrets = toml.load(secrets_path)
 
 import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+SPREADSHEET_ID = "101RJFbuXY3Jc1YOePf8N0ap7ZTBZndt24j3A4a6iFGs"
 
 COLUMNS = {
     "contatos":   ["id", "nome", "telefone", "instagram", "status", "origem", "notas", "criado_em", "atualizado_em"],
@@ -33,9 +29,8 @@ COLUMNS = {
 }
 
 def get_spreadsheet():
-    creds = Credentials.from_service_account_info(dict(secrets["gcp_service_account"]), scopes=SCOPES)
-    client = gspread.authorize(creds)
-    return client.open(secrets["spreadsheet_name"])
+    client = gspread.service_account_from_dict(dict(secrets["gcp_service_account"]))
+    return client.open_by_key(SPREADSHEET_ID)
 
 def ensure_sheets(sp):
     existing = [ws.title for ws in sp.worksheets()]
