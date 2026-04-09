@@ -23,6 +23,11 @@ COLUMNS = {
     "custos": [
         "id", "data", "categoria", "descricao", "valor", "criado_em",
     ],
+    "resumo_diario": [
+        "id", "data", "fonte", "contato",
+        "mensagem_resumo", "acao_sugerida",
+        "dados_json", "status", "criado_em",
+    ],
 }
 
 
