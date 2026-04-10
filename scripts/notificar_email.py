@@ -6,7 +6,7 @@ Usa Gmail SMTP com "senha de app" (gratuito, sem biblioteca externa).
 
 Pré-requisito no secrets.toml:
     email_destino    = "seu@email.com"
-    gmail_usuario    = "atelieafetoemonto@gmail.com"
+    gmail_usuario    = "seu_email@gmail.com"
     gmail_senha_app  = "xxxx xxxx xxxx xxxx"
 
 Como criar a senha de app no Gmail:
