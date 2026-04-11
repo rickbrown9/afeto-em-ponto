@@ -28,6 +28,7 @@ COLUMNS = {
         "mensagem_resumo", "acao_sugerida",
         "dados_json", "status", "criado_em",
     ],
+    "cmv_config": ["id", "item", "valor", "atualizado_em"],
 }
 
 
