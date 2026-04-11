@@ -27,6 +27,7 @@ CMV_PADRAO = {
     "Etiqueta":       1.50,
     "Impressão":      2.00,
 }
+CUSTO_MIDIA_PADRAO = 300.00
 
 
 def extrair_qtd(row) -> int:
@@ -37,46 +38,48 @@ def extrair_qtd(row) -> int:
     return int(m.group(1)) if m else 1
 
 
-def carregar_cmv_config() -> dict:
-    """Retorna custos salvos no Sheets, ou o padrão se vazio."""
+def carregar_cmv_config() -> tuple[dict, float]:
+    """Retorna (custos_por_peca, custo_midia). Usa padrão se vazio."""
     try:
         df = read_sheet("cmv_config")
         if df.empty:
-            return dict(CMV_PADRAO)
+            return dict(CMV_PADRAO), CUSTO_MIDIA_PADRAO
         custos = {}
+        midia = CUSTO_MIDIA_PADRAO
         for _, row in df.iterrows():
             try:
-                custos[row["item"]] = float(row["valor"])
+                if row["item"] == "__midia__":
+                    midia = float(row["valor"])
+                else:
+                    custos[row["item"]] = float(row["valor"])
             except Exception:
                 pass
-        return custos if custos else dict(CMV_PADRAO)
+        return (custos if custos else dict(CMV_PADRAO)), midia
     except Exception:
-        return dict(CMV_PADRAO)
+        return dict(CMV_PADRAO), CUSTO_MIDIA_PADRAO
 
 
-def salvar_cmv_config(custos: dict):
+def salvar_cmv_config(custos: dict, midia: float):
     """Substitui toda a config de CMV no Sheets."""
     from utils.sheets import _worksheet, read_sheet as rs, COLUMNS
     from datetime import datetime
     import uuid
     ws = _worksheet("cmv_config")
-    # Limpa as linhas existentes (mantém cabeçalho)
     existing = rs("cmv_config")
     if not existing.empty:
         for i in range(len(existing), 0, -1):
             ws.delete_rows(i + 1)
-    # Insere os novos valores
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cols = COLUMNS["cmv_config"]
     for item, valor in custos.items():
-        row_id = str(uuid.uuid4())[:8].upper()
-        ws.append_row([row_id, item, str(valor), now], value_input_option="USER_ENTERED")
+        ws.append_row([str(uuid.uuid4())[:8].upper(), item, str(valor), now], value_input_option="USER_ENTERED")
+    # Custo de mídia salvo com chave especial
+    ws.append_row([str(uuid.uuid4())[:8].upper(), "__midia__", str(midia), now], value_input_option="USER_ENTERED")
     read_sheet.clear()
 
 
 # ── Carrega custos e pedidos ────────────────────────────────────────────────────
-custos_config = carregar_cmv_config()
-cmv_por_peca  = sum(custos_config.values())
+custos_config, custo_midia = carregar_cmv_config()
+cmv_por_peca = sum(custos_config.values())
 
 pedidos = read_sheet("pedidos")
 if not pedidos.empty:
@@ -91,14 +94,16 @@ st.subheader("🧾 Custo por peça")
 
 col_tab, col_total = st.columns([3, 1])
 with col_tab:
-    df_custos = pd.DataFrame([
-        {"Item": k, "Custo (R$)": f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")}
-        for k, v in custos_config.items()
-    ])
+    df_custos = pd.DataFrame(
+        [{"Item": k, "Tipo": "CMV (por peça)", "Custo (R$)": f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")}
+         for k, v in custos_config.items()] +
+        [{"Item": "Mídia / Marketing", "Tipo": "Fixo (mensal)", "Custo (R$)": f"R$ {custo_midia:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")}]
+    )
     st.dataframe(df_custos, hide_index=True, use_container_width=True)
 
 with col_total:
     st.metric("CMV por peça", f"R$ {cmv_por_peca:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    st.metric("Custo fixo/mês", f"R$ {custo_midia:,.0f}".replace(",", "."))
 
 with st.expander("✏️ Editar custos"):
     with st.form("editar_cmv"):
@@ -106,8 +111,9 @@ with st.expander("✏️ Editar custos"):
         cols_form = st.columns(3)
         for i, (item, val) in enumerate(custos_config.items()):
             novos[item] = cols_form[i % 3].number_input(item, value=float(val), min_value=0.0, step=0.50)
+        nova_midia = st.number_input("Custo de Mídia / Marketing (R$/mês)", value=float(custo_midia), min_value=0.0, step=10.0)
         if st.form_submit_button("Salvar custos", type="primary"):
-            salvar_cmv_config(novos)
+            salvar_cmv_config(novos, nova_midia)
             st.toast("Custos atualizados!", icon="✅")
             st.rerun()
 
@@ -129,16 +135,19 @@ mes_sel = col_sel.selectbox("Mês", meses, format_func=lambda x: MES_NOMES.get(x
 df_mes = pedidos[pedidos["mes_ref"] == mes_sel]
 fat        = df_mes["valor_total"].sum()
 pecas      = int(df_mes["qtd"].sum())
-cmv_total  = pecas * cmv_por_peca
-margem     = fat - cmv_total
-margem_pct = (margem / fat * 100) if fat else 0
+cmv_total   = pecas * cmv_por_peca
+margem_bruta = fat - cmv_total
+lucro_liq   = margem_bruta - custo_midia
+margem_pct  = (margem_bruta / fat * 100) if fat else 0
+lucro_pct   = (lucro_liq / fat * 100) if fat else 0
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Faturado",     f"R$ {fat:,.0f}".replace(",", "."),        f"{pecas} peças")
-c2.metric("CMV total",    f"R$ {cmv_total:,.0f}".replace(",", "."),  f"R$ {cmv_por_peca:.2f}/peça")
-c3.metric("Margem bruta", f"R$ {margem:,.0f}".replace(",", "."))
-c4.metric("Margem %",     f"{margem_pct:.1f}%")
-c5.metric("CMV %",        f"{(cmv_total/fat*100):.1f}%" if fat else "—")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1.metric("Faturado",      f"R$ {fat:,.0f}".replace(",", "."),          f"{pecas} peças")
+c2.metric("CMV total",     f"R$ {cmv_total:,.0f}".replace(",", "."),    f"R$ {cmv_por_peca:.2f}/peça")
+c3.metric("Custo de mídia",f"R$ {custo_midia:,.0f}".replace(",", "."),  "fixo mensal")
+c4.metric("Margem bruta",  f"R$ {margem_bruta:,.0f}".replace(",", "."), f"{margem_pct:.1f}%")
+c5.metric("Lucro líquido", f"R$ {lucro_liq:,.0f}".replace(",", "."),    f"{lucro_pct:.1f}% do fat.")
+c6.metric("CMV %",         f"{(cmv_total/fat*100):.1f}%" if fat else "—")
 
 st.divider()
 
@@ -174,14 +183,16 @@ resumo = (
     .reset_index()
     .sort_values("mes_ref")
 )
-resumo["CMV"]    = resumo["Pecas"] * cmv_por_peca
-resumo["Margem"] = resumo["Faturado"] - resumo["CMV"]
-resumo["Mês"]    = resumo["mes_ref"].map(lambda x: MES_NOMES.get(x, x))
+resumo["CMV"]         = resumo["Pecas"] * cmv_por_peca
+resumo["Margem bruta"] = resumo["Faturado"] - resumo["CMV"]
+resumo["Lucro líquido"] = resumo["Margem bruta"] - custo_midia
+resumo["Mês"]          = resumo["mes_ref"].map(lambda x: MES_NOMES.get(x, x))
 
 fig = go.Figure()
-fig.add_bar(x=resumo["Mês"], y=resumo["Faturado"], name="Faturado", marker_color="#D4956A")
-fig.add_bar(x=resumo["Mês"], y=resumo["CMV"],      name="CMV",      marker_color="#C62828")
-fig.add_bar(x=resumo["Mês"], y=resumo["Margem"],   name="Margem",   marker_color="#2E7D32")
+fig.add_bar(x=resumo["Mês"], y=resumo["Faturado"],       name="Faturado",       marker_color="#D4956A")
+fig.add_bar(x=resumo["Mês"], y=resumo["CMV"],            name="CMV",            marker_color="#C62828")
+fig.add_bar(x=resumo["Mês"], y=resumo["Margem bruta"],   name="Margem bruta",   marker_color="#1565C0")
+fig.add_bar(x=resumo["Mês"], y=resumo["Lucro líquido"],  name="Lucro líquido",  marker_color="#2E7D32")
 fig.update_layout(
     barmode="group",
     plot_bgcolor="rgba(0,0,0,0)",
