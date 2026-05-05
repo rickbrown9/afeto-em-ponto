@@ -61,8 +61,12 @@ def carregar_cmv_config() -> tuple[dict, float]:
 
 def salvar_cmv_config(custos: dict, midia: float):
     """Substitui toda a config de CMV no Sheets usando clear() para evitar bugs de deleção."""
+    import gspread
     from datetime import datetime
-    ws = _worksheet("cmv_config")
+    try:
+        ws = _worksheet("cmv_config")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = _get_spreadsheet().add_worksheet(title="cmv_config", rows=50, cols=len(COLUMNS["cmv_config"]))
     ws.clear()
     ws.append_row(COLUMNS["cmv_config"])  # restaura cabeçalho
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
