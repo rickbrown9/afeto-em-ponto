@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import re
-from utils.sheets import read_sheet, append_row, update_row, is_configured
+from utils.sheets import read_sheet, append_row, update_row, is_configured, _worksheet, _get_spreadsheet, COLUMNS, _new_id
 
 st.set_page_config(page_title="CMV — Afeto em Ponto", page_icon="📦", layout="wide")
 st.title("📦 CMV — Custo de Mercadoria Vendida")
@@ -60,21 +60,42 @@ def carregar_cmv_config() -> tuple[dict, float]:
 
 
 def salvar_cmv_config(custos: dict, midia: float):
-    """Substitui toda a config de CMV no Sheets."""
-    from utils.sheets import _worksheet, read_sheet as rs, COLUMNS
+    """Substitui toda a config de CMV no Sheets usando clear() para evitar bugs de deleção."""
     from datetime import datetime
-    import uuid
     ws = _worksheet("cmv_config")
-    existing = rs("cmv_config")
-    if not existing.empty:
-        for i in range(len(existing), 0, -1):
-            ws.delete_rows(i + 1)
+    ws.clear()
+    ws.append_row(COLUMNS["cmv_config"])  # restaura cabeçalho
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     for item, valor in custos.items():
-        ws.append_row([str(uuid.uuid4())[:8].upper(), item, str(valor), now], value_input_option="USER_ENTERED")
-    # Custo de mídia salvo com chave especial
-    ws.append_row([str(uuid.uuid4())[:8].upper(), "__midia__", str(midia), now], value_input_option="USER_ENTERED")
+        ws.append_row([_new_id(), item, str(valor), now], value_input_option="USER_ENTERED")
+    ws.append_row([_new_id(), "__midia__", str(midia), now], value_input_option="USER_ENTERED")
     read_sheet.clear()
+
+
+def exportar_cmv_relatorio(resumo_df: pd.DataFrame):
+    """Cria ou substitui a aba CMV_Relatorio na planilha existente."""
+    sp = _get_spreadsheet()
+    existing_titles = [ws.title for ws in sp.worksheets()]
+    if "CMV_Relatorio" in existing_titles:
+        ws = sp.worksheet("CMV_Relatorio")
+        ws.clear()
+    else:
+        ws = sp.add_worksheet(title="CMV_Relatorio", rows=50, cols=10)
+    headers = ["Mês", "Faturado (R$)", "Peças", "CMV/peça (R$)", "CMV Total (R$)",
+               "Custo Mídia (R$)", "Margem Bruta (R$)", "Lucro Líquido (R$)", "CMV %"]
+    ws.append_row(headers)
+    for _, row in resumo_df.iterrows():
+        ws.append_row([
+            str(row.get("Mês", "")),
+            str(row.get("Faturado", "")),
+            str(row.get("Pecas", "")),
+            str(row.get("CMV_peca", "")),
+            str(row.get("CMV", "")),
+            str(row.get("Midia", "")),
+            str(row.get("Margem bruta", "")),
+            str(row.get("Lucro líquido", "")),
+            str(row.get("CMV_pct", "")),
+        ], value_input_option="USER_ENTERED")
 
 
 # ── Carrega custos e pedidos ────────────────────────────────────────────────────
@@ -183,9 +204,14 @@ resumo = (
     .reset_index()
     .sort_values("mes_ref")
 )
-resumo["CMV"]         = resumo["Pecas"] * cmv_por_peca
+resumo["CMV"]          = resumo["Pecas"] * cmv_por_peca
+resumo["Midia"]        = custo_midia
 resumo["Margem bruta"] = resumo["Faturado"] - resumo["CMV"]
 resumo["Lucro líquido"] = resumo["Margem bruta"] - custo_midia
+resumo["CMV_peca"]    = cmv_por_peca
+resumo["CMV_pct"]     = resumo.apply(
+    lambda r: f"{(r['CMV'] / r['Faturado'] * 100):.1f}%" if r["Faturado"] else "—", axis=1
+)
 resumo["Mês"]          = resumo["mes_ref"].map(lambda x: MES_NOMES.get(x, x))
 
 fig = go.Figure()
@@ -203,3 +229,14 @@ fig.update_layout(
     height=320,
 )
 st.plotly_chart(fig, use_container_width=True)
+
+st.divider()
+st.subheader("📤 Exportar para Google Sheets")
+st.caption("Cria ou atualiza a aba 'CMV_Relatorio' na sua planilha do Google Sheets com o resumo mensal completo.")
+if st.button("📊 Exportar resumo mensal para Sheets", type="primary"):
+    with st.spinner("Exportando..."):
+        try:
+            exportar_cmv_relatorio(resumo)
+            st.success("Aba 'CMV_Relatorio' atualizada na planilha! Abra o Google Sheets para visualizar e editar.")
+        except Exception as e:
+            st.error(f"Erro ao exportar: {e}")

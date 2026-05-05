@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-from utils.sheets import read_sheet, append_row, update_row, is_configured, sync_cronograma_pagamento
+from datetime import datetime, date, timedelta
+from utils.sheets import read_sheet, append_row, update_row, delete_row, is_configured, sync_cronograma_pagamento
 
 st.set_page_config(page_title="Financeiro — Afeto em Ponto", page_icon="💰", layout="wide")
 st.title("💰 Financeiro — Pedidos e Pagamentos")
@@ -9,6 +9,29 @@ st.title("💰 Financeiro — Pedidos e Pagamentos")
 if not is_configured():
     st.warning("Configure o sistema primeiro. Veja SETUP.md.")
     st.stop()
+
+def proxima_data_disponivel() -> str:
+    """Retorna o próximo dia (a partir de amanhã) sem peças agendadas no cronograma."""
+    try:
+        df = read_sheet("cronograma")
+        datas_ocupadas = set()
+        if not df.empty:
+            for val in df["data_prevista"].dropna():
+                try:
+                    parts = str(val).strip().split("/")
+                    if len(parts) == 3:
+                        datas_ocupadas.add(date(int(parts[2]), int(parts[1]), int(parts[0])))
+                except Exception:
+                    pass
+        candidata = date.today() + timedelta(days=1)
+        for _ in range(60):
+            if candidata not in datas_ocupadas:
+                return candidata.strftime("%d/%m/%Y")
+            candidata += timedelta(days=1)
+        return candidata.strftime("%d/%m/%Y")
+    except Exception:
+        return (date.today() + timedelta(days=1)).strftime("%d/%m/%Y")
+
 
 MES_NOMES = {
     "2026-01": "Janeiro/2026", "2026-02": "Fevereiro/2026", "2026-03": "Março/2026",
@@ -26,6 +49,73 @@ CATEGORIAS_CUSTO = [
 
 MES_ATUAL  = datetime.now().strftime("%Y-%m")
 MESES_FORM = [f"2026-{m:02d}" for m in range(1, 13)]
+
+
+@st.dialog("✏️ Editar pedido")
+def editar_pedido(row):
+    e1, e2 = st.columns(2)
+    novo_cliente  = e1.text_input("Cliente *", value=str(row.get("contato_nome", "")))
+    mes_atual_val = str(row.get("mes_ref", MES_ATUAL))
+    novo_mes      = e2.selectbox(
+        "Mês de referência", MESES_FORM,
+        index=MESES_FORM.index(mes_atual_val) if mes_atual_val in MESES_FORM else 0,
+        format_func=lambda x: MES_NOMES.get(x, x),
+    )
+    nova_desc     = st.text_input("Descrição *", value=str(row.get("descricao", "")))
+    e3, e4 = st.columns(2)
+    novo_total    = e3.number_input("Valor total (R$)", value=float(row.get("valor_total", 0)), min_value=0.0, step=10.0)
+    novo_pago     = e4.number_input("Valor pago (R$)", value=float(row.get("valor_pago", 0)), min_value=0.0, step=10.0)
+    nova_entrega  = e1.text_input("Entrega prevista", value=str(row.get("data_entrega", "")))
+    b1, b2 = st.columns(2)
+    if b1.button("💾 Salvar", type="primary", use_container_width=True):
+        if not novo_cliente.strip() or not nova_desc.strip():
+            st.error("Cliente e descrição são obrigatórios.")
+        elif novo_pago > novo_total:
+            st.error("Valor pago não pode ser maior que o total.")
+        else:
+            status_calc = "pago" if novo_pago >= novo_total else ("parcial" if novo_pago > 0 else "pendente")
+            update_row("pedidos", str(row["id"]), {
+                "contato_nome":     novo_cliente.strip(),
+                "mes_ref":          novo_mes,
+                "descricao":        nova_desc.strip(),
+                "valor_total":      novo_total,
+                "valor_pago":       novo_pago,
+                "status_pagamento": status_calc,
+                "data_entrega":     nova_entrega.strip(),
+            })
+            st.cache_data.clear()
+            st.rerun()
+    if b2.button("✖ Cancelar", use_container_width=True):
+        st.rerun()
+
+
+@st.dialog("✏️ Editar custo")
+def editar_custo(row):
+    e1, e2 = st.columns(2)
+    nova_data   = e1.text_input("Data *", value=str(row.get("data", "")))
+    nova_cat    = e2.selectbox(
+        "Categoria", CATEGORIAS_CUSTO,
+        index=CATEGORIAS_CUSTO.index(str(row.get("categoria", CATEGORIAS_CUSTO[0])))
+        if str(row.get("categoria", "")) in CATEGORIAS_CUSTO else 0,
+    )
+    nova_desc   = st.text_input("Descrição *", value=str(row.get("descricao", "")))
+    novo_valor  = st.number_input("Valor (R$)", value=float(row.get("valor", 0)), min_value=0.0, step=5.0)
+    b1, b2 = st.columns(2)
+    if b1.button("💾 Salvar", type="primary", use_container_width=True):
+        if not nova_desc.strip() or novo_valor <= 0:
+            st.error("Descrição e valor são obrigatórios.")
+        else:
+            update_row("custos", str(row["id"]), {
+                "data":      nova_data.strip(),
+                "categoria": nova_cat,
+                "descricao": nova_desc.strip(),
+                "valor":     novo_valor,
+            })
+            st.cache_data.clear()
+            st.rerun()
+    if b2.button("✖ Cancelar", use_container_width=True):
+        st.rerun()
+
 
 # ── Carrega dados ──────────────────────────────────────────────────────────────
 pedidos = read_sheet("pedidos")
@@ -89,6 +179,8 @@ else:
                 st.markdown(f"**Falta:** R$ {row['pendente']:,.0f}".replace(",", "."))
                 if row.get("data_entrega"):
                     st.markdown(f"**Entrega prevista:** {row['data_entrega']}")
+                if st.button("✏️ Editar pedido", key=f"edit_ped_{row['id']}"):
+                    editar_pedido(row.to_dict())
             with col_pag:
                 with st.form(key=f"pag_{row['id']}"):
                     st.markdown("**Atualizar pagamento**")
@@ -138,7 +230,7 @@ with st.form("novo_pedido", clear_on_submit=True):
             # Inclui qtd na descrição para extração automática no dashboard
             desc_final = f"{qtd_pecas} peça(s) — {descricao.strip()}" if qtd_pecas > 1 \
                          else descricao.strip()
-            append_row("pedidos", {
+            novo_pedido_id = append_row("pedidos", {
                 "contato_nome": cliente.strip(),
                 "mes_ref": mes_ref,
                 "descricao": desc_final,
@@ -147,8 +239,62 @@ with st.form("novo_pedido", clear_on_submit=True):
                 "status_pagamento": status_calc,
                 "data_entrega": data_entrega.strip(),
             })
-            st.toast(f"Pedido de {cliente} registrado!", icon="✅")
+            st.toast(f"Pedido de {cliente.strip()} registrado!", icon="✅")
+
+            # Auto-criar contato no CRM se ainda não existir
+            contatos_df = read_sheet("contatos")
+            cliente_nome = cliente.strip()
+            ja_existe = (
+                not contatos_df.empty
+                and contatos_df["nome"].str.strip().str.lower().eq(cliente_nome.lower()).any()
+            )
+            if not ja_existe:
+                append_row("contatos", {
+                    "nome":      cliente_nome,
+                    "telefone":  "",
+                    "instagram": "",
+                    "status":    "cliente",
+                    "origem":    "Instagram",
+                    "notas":     f"Criado automaticamente ao registrar pedido ({mes_ref})",
+                })
+                st.toast(f"👥 {cliente_nome} adicionado ao CRM como cliente!", icon="👥")
+
+            # Sugestão de próxima data disponível no cronograma
+            data_sugerida = proxima_data_disponivel()
+            st.session_state["sugestao_cronograma"] = {
+                "pedido_id":   novo_pedido_id,
+                "cliente":     cliente_nome,
+                "descricao":   desc_final,
+                "data":        data_sugerida,
+                "status_pag":  status_calc,
+            }
             st.rerun()
+
+# Bloco de sugestão de cronograma pós-criação de pedido
+if "sugestao_cronograma" in st.session_state:
+    sug = st.session_state["sugestao_cronograma"]
+    st.info(
+        f"📅 **Próxima data disponível para bordagem:** {sug['data']}  \n"
+        f"Deseja já adicionar **{sug['descricao']}** de **{sug['cliente']}** ao cronograma?"
+    )
+    c_sim, c_nao, _ = st.columns([1, 1, 4])
+    if c_sim.button("✅ Adicionar ao cronograma", type="primary"):
+        append_row("cronograma", {
+            "pedido_id":            sug["pedido_id"],
+            "cliente":              sug["cliente"],
+            "descricao_peca":       sug["descricao"],
+            "tamanho":              "",
+            "data_prevista":        sug["data"],
+            "status_bordagem":      "fila",
+            "status_pagamento_ref": sug["status_pag"],
+            "notas":                "",
+        })
+        del st.session_state["sugestao_cronograma"]
+        st.toast(f"Adicionado ao cronograma para {sug['data']}!", icon="🪡")
+        st.rerun()
+    if c_nao.button("✖ Dispensar"):
+        del st.session_state["sugestao_cronograma"]
+        st.rerun()
 
 st.divider()
 
@@ -180,11 +326,18 @@ if not custos.empty:
         if df_c.empty:
             st.caption("Nenhum custo registrado para este mês.")
         else:
-            display_c = df_c[["data", "categoria", "descricao", "valor"]].copy()
-            display_c.columns = ["Data", "Categoria", "Descrição", "Valor (R$)"]
-            display_c["Valor (R$)"] = display_c["Valor (R$)"].map(
-                lambda x: f"R$ {x:,.0f}".replace(",", "."))
-            st.dataframe(display_c, use_container_width=True, hide_index=True)
+            for _, crow in df_c.iterrows():
+                cr1, cr2, cr3, cr4, cr5, cr6 = st.columns([1.5, 2, 3, 1.5, 0.6, 0.6])
+                cr1.caption(str(crow.get("data", "")))
+                cr2.caption(str(crow.get("categoria", "")))
+                cr3.caption(str(crow.get("descricao", "")))
+                cr4.caption(f"R$ {crow['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                if cr5.button("✏️", key=f"edit_custo_{crow['id']}", use_container_width=True):
+                    editar_custo(crow.to_dict())
+                if cr6.button("🗑", key=f"del_custo_{crow['id']}", use_container_width=True):
+                    delete_row("custos", str(crow["id"]))
+                    st.cache_data.clear()
+                    st.rerun()
     with cc2:
         st.metric("Total custos", f"R$ {total_custo:,.0f}".replace(",", "."))
         fat_mes = df["valor_total"].sum() if not df.empty else 0

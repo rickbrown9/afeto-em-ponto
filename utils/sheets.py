@@ -8,7 +8,7 @@ import uuid
 COLUMNS = {
     "contatos": [
         "id", "nome", "telefone", "instagram",
-        "status", "origem", "notas", "criado_em", "atualizado_em",
+        "endereco", "status", "origem", "notas", "criado_em", "atualizado_em",
     ],
     "pedidos": [
         "id", "contato_nome", "mes_ref", "descricao",
