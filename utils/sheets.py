@@ -72,6 +72,11 @@ def _new_id() -> str:
     return str(uuid.uuid4())[:8].upper()
 
 
+def _sheet_headers(ws) -> list:
+    """Retorna os cabeçalhos reais da planilha (linha 1)."""
+    return ws.row_values(1)
+
+
 def append_row(sheet_name: str, row_dict: dict) -> str:
     row_dict = dict(row_dict)
     row_id = _new_id()
@@ -80,8 +85,10 @@ def append_row(sheet_name: str, row_dict: dict) -> str:
     row_dict.setdefault("criado_em", now)
     if "atualizado_em" in COLUMNS[sheet_name]:
         row_dict["atualizado_em"] = now
-    ordered = [str(row_dict.get(col, "")) for col in COLUMNS[sheet_name]]
-    _worksheet(sheet_name).append_row(ordered, value_input_option="USER_ENTERED")
+    ws = _worksheet(sheet_name)
+    headers = _sheet_headers(ws) or COLUMNS[sheet_name]
+    ordered = [str(row_dict.get(col, "")) for col in headers]
+    ws.append_row(ordered, value_input_option="USER_ENTERED")
     read_sheet.clear()
     return row_id
 
@@ -95,13 +102,14 @@ def update_row(sheet_name: str, row_id: str, updates: dict):
     if not matches:
         return
     row_num = matches[0] + 2  # +1 zero-index, +1 header
+    headers = _sheet_headers(ws)  # posições reais da planilha
     cols = COLUMNS[sheet_name]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     if "atualizado_em" in cols:
         updates = {**updates, "atualizado_em": now}
     for col, val in updates.items():
-        if col in cols:
-            ws.update_cell(row_num, cols.index(col) + 1, str(val))
+        if col in headers:
+            ws.update_cell(row_num, headers.index(col) + 1, str(val))
     read_sheet.clear()
 
 
