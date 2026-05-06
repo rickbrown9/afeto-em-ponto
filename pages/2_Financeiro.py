@@ -10,8 +10,8 @@ if not is_configured():
     st.warning("Configure o sistema primeiro. Veja SETUP.md.")
     st.stop()
 
-def proxima_data_disponivel() -> str:
-    """Retorna o próximo dia (a partir de amanhã) sem peças agendadas no cronograma."""
+def proximas_datas_disponiveis(n: int) -> list:
+    """Retorna as próximas N datas livres (1 peça/dia) a partir de amanhã."""
     try:
         df = read_sheet("cronograma")
         datas_ocupadas = set()
@@ -23,14 +23,19 @@ def proxima_data_disponivel() -> str:
                         datas_ocupadas.add(date(int(parts[2]), int(parts[1]), int(parts[0])))
                 except Exception:
                     pass
+        resultado = []
         candidata = date.today() + timedelta(days=1)
-        for _ in range(60):
+        while len(resultado) < n:
             if candidata not in datas_ocupadas:
-                return candidata.strftime("%d/%m/%Y")
+                resultado.append(candidata.strftime("%d/%m/%Y"))
+                datas_ocupadas.add(candidata)  # reserva para as próximas peças
             candidata += timedelta(days=1)
-        return candidata.strftime("%d/%m/%Y")
+            if candidata > date.today() + timedelta(days=365):
+                break
+        return resultado
     except Exception:
-        return (date.today() + timedelta(days=1)).strftime("%d/%m/%Y")
+        base = date.today() + timedelta(days=1)
+        return [(base + timedelta(days=i)).strftime("%d/%m/%Y") for i in range(n)]
 
 
 MES_NOMES = {
@@ -259,38 +264,45 @@ with st.form("novo_pedido", clear_on_submit=True):
                 })
                 st.toast(f"👥 {cliente_nome} adicionado ao CRM como cliente!", icon="👥")
 
-            # Sugestão de próxima data disponível no cronograma
-            data_sugerida = proxima_data_disponivel()
+            # Calcula datas disponíveis: 1 por peça
+            datas = proximas_datas_disponiveis(int(qtd_pecas))
             st.session_state["sugestao_cronograma"] = {
-                "pedido_id":   novo_pedido_id,
-                "cliente":     cliente_nome,
-                "descricao":   desc_final,
-                "data":        data_sugerida,
-                "status_pag":  status_calc,
+                "pedido_id":  novo_pedido_id,
+                "cliente":    cliente_nome,
+                "descricao":  descricao.strip(),
+                "qtd":        int(qtd_pecas),
+                "datas":      datas,
+                "status_pag": status_calc,
             }
             st.rerun()
 
 # Bloco de sugestão de cronograma pós-criação de pedido
 if "sugestao_cronograma" in st.session_state:
     sug = st.session_state["sugestao_cronograma"]
+    qtd  = sug["qtd"]
+    datas = sug["datas"]
+
+    linhas_datas = "\n".join(f"  • Peça {i+1}: **{d}**" for i, d in enumerate(datas))
     st.info(
-        f"📅 **Próxima data disponível para bordagem:** {sug['data']}  \n"
-        f"Deseja já adicionar **{sug['descricao']}** de **{sug['cliente']}** ao cronograma?"
+        f"🪡 **{qtd} peça(s) de {sug['cliente']}** prontas para entrar no cronograma:\n\n"
+        + linhas_datas
     )
-    c_sim, c_nao, _ = st.columns([1, 1, 4])
-    if c_sim.button("✅ Adicionar ao cronograma", type="primary"):
-        append_row("cronograma", {
-            "pedido_id":            sug["pedido_id"],
-            "cliente":              sug["cliente"],
-            "descricao_peca":       sug["descricao"],
-            "tamanho":              "",
-            "data_prevista":        sug["data"],
-            "status_bordagem":      "fila",
-            "status_pagamento_ref": sug["status_pag"],
-            "notas":                "",
-        })
+    c_sim, c_nao, _ = st.columns([2, 1, 3])
+    if c_sim.button(f"✅ Criar {qtd} card(s) no cronograma", type="primary"):
+        for i, data in enumerate(datas):
+            desc_peca = sug["descricao"] if qtd == 1 else f"{sug['descricao']} ({i+1}/{qtd})"
+            append_row("cronograma", {
+                "pedido_id":            sug["pedido_id"],
+                "cliente":              sug["cliente"],
+                "descricao_peca":       desc_peca,
+                "tamanho":              "",
+                "data_prevista":        data,
+                "status_bordagem":      "fila",
+                "status_pagamento_ref": sug["status_pag"],
+                "notas":                "",
+            })
         del st.session_state["sugestao_cronograma"]
-        st.toast(f"Adicionado ao cronograma para {sug['data']}!", icon="🪡")
+        st.toast(f"{qtd} peça(s) adicionadas ao cronograma!", icon="🪡")
         st.rerun()
     if c_nao.button("✖ Dispensar"):
         del st.session_state["sugestao_cronograma"]
